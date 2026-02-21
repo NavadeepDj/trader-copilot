@@ -7,8 +7,13 @@ from typing import Dict, List
 
 from google.adk.agents import Agent
 
-from trading_agents.config import GEMINI_MODEL
-from trading_agents.tools.dividend_data import search_upcoming_dividends
+from trading_agents.config import DIVIDEND_STOP_ATR_MULTIPLIER, GEMINI_MODEL
+from trading_agents.tools.backtest_dividend import (
+    backtest_current_moneycontrol_dividends_filtered,
+    backtest_dividend_momentum,
+    backtest_single_event,
+)
+from trading_agents.tools.dividend_data import fetch_moneycontrol_dividends
 from trading_agents.tools.fundamental_data import (
     assess_dividend_health,
     get_stock_fundamentals,
@@ -35,21 +40,21 @@ def scan_dividend_opportunities(min_days_to_ex: int = 3) -> Dict:
     Returns:
         dict with ranked dividend opportunities.
     """
-    search_result = search_upcoming_dividends()
+    mc_result = fetch_moneycontrol_dividends()
 
-    if search_result.get("status") != "success":
+    if mc_result.get("status") != "success":
         return {
             "status": "error",
-            "error_message": f"Dividend discovery failed: {search_result.get('error_message', 'unknown')}",
+            "error_message": f"Dividend discovery failed: {mc_result.get('error_message', 'unknown')}",
             "scan_date_ist": datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S IST"),
         }
 
-    candidates = search_result.get("candidates", [])
+    candidates = mc_result.get("candidates", [])
     if not candidates:
         return {
             "status": "success",
             "strategy": "DIVIDEND_ANNOUNCEMENT",
-            "message": "No upcoming dividend announcements found via web search.",
+            "message": "No upcoming dividend announcements found on Moneycontrol.",
             "scan_date_ist": datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S IST"),
         }
 
@@ -142,8 +147,8 @@ def scan_dividend_opportunities(min_days_to_ex: int = 3) -> Dict:
             "return_20d_pct": round(metrics["return_20d"] * 100, 2),
             "atr": round(atr, 2),
             "suggested_entry": round(closes[-1], 2),
-            "suggested_stop": round(closes[-1] - 1.5 * atr, 2),
-            "suggested_exit": f"1-2 days before ex-date ({ex_date})",
+            "suggested_stop": round(closes[-1] - DIVIDEND_STOP_ATR_MULTIPLIER * atr, 2),
+            "suggested_exit": f"Sell at least 1 trading day before ex-date ({ex_date})",
             "rank_score": round(rank_score, 1),
         })
 
@@ -158,13 +163,14 @@ def scan_dividend_opportunities(min_days_to_ex: int = 3) -> Dict:
     return {
         "status": "success",
         "strategy": "DIVIDEND_ANNOUNCEMENT",
-        "discovery_source": "Gemini Google Search (entire Indian market)",
+        "discovery_source": "Moneycontrol API (corporate actions calendar)",
         "dividends_discovered": len(candidates),
         "analyzed": len(filtered),
         "opportunities_count": len(opportunities),
         "top_opportunities": opportunities[:8],
         "skipped_count": len(skipped),
         "skipped_summary": skipped_summary[:10],
+        "unmapped_companies": mc_result.get("unmapped_companies"),
         "scan_date_ist": datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S IST"),
     }
 
@@ -222,8 +228,8 @@ def analyze_dividend_stock(symbol: str) -> Dict:
 
             analysis["trade_levels"] = {
                 "suggested_entry": round(closes[-1], 2),
-                "suggested_stop": round(closes[-1] - 1.5 * atr, 2),
-                "risk_per_share": round(1.5 * atr, 2),
+                "suggested_stop": round(closes[-1] - DIVIDEND_STOP_ATR_MULTIPLIER * atr, 2),
+                "risk_per_share": round(DIVIDEND_STOP_ATR_MULTIPLIER * atr, 2),
             }
 
     f = fundamentals.get("fundamentals", {})
@@ -249,31 +255,55 @@ dividend_agent = Agent(
         "STRATEGY THESIS:\n"
         "Stocks tend to rise between dividend announcement and ex-date. "
         "We buy after announcement, sell 1-2 days BEFORE ex-date to avoid "
-        "the ex-date price drop.\n\n"
+        "the ex-date price drop. This works BEST in BULL or NEUTRAL markets; "
+        "in BEAR markets the run-up often fails and you see more losses. "
+        "Suggest checking market regime (regime_analyst) when presenting picks or backtest.\n\n"
         "HOW IT WORKS:\n"
-        "scan_dividend_opportunities searches the ENTIRE Indian stock market "
-        "via Google Search (Moneycontrol, BSE, NSE, Tickertape). For each "
-        "company found, it automatically fetches fundamentals and historical "
-        "data from yfinance to assess health and technicals. No limited watchlist.\n\n"
+        "scan_dividend_opportunities fetches ALL upcoming dividends from the "
+        "Moneycontrol corporate actions API (real-time, market-wide). For each "
+        "stock found, it resolves the NSE symbol and fetches fundamentals + "
+        "historical data from yfinance for health and technical analysis.\n\n"
         "TOOLS:\n"
-        "1. scan_dividend_opportunities: Discovers dividend announcements "
-        "market-wide, then analyzes each with yfinance data. Returns ranked "
+        "1. scan_dividend_opportunities: Fetches dividend announcements from "
+        "Moneycontrol API, analyzes each with yfinance data. Returns ranked "
         "opportunities with health, technicals, and entry/exit.\n"
-        "2. analyze_dividend_stock: Deep-dive on a single stock.\n\n"
+        "2. analyze_dividend_stock: Deep-dive on a single stock.\n"
+        "3. backtest_dividend_momentum: Backtest on yfinance historical data for a symbol "
+        "(no announcement dates there). Use for 'did this work in the past?' or "
+        "'how did X perform historically?'\n"
+        "4. backtest_current_moneycontrol_dividends_filtered: Backtest ONLY stocks that "
+        "PASS the scan (dividend health, above 50-DMA, uptrend). Uses stop = entry - 1*ATR; "
+        "sell at least 1 day before ex (or at stop if hit). Use for 'backtest dividend strategy' "
+        "or 'validate recommended picks'.\n"
+        "5. backtest_single_event: Backtest one event: symbol, announcement_date (YYYY-MM-DD), "
+        "ex_date (YYYY-MM-DD). Optional stop_price to simulate stop-loss.\n\n"
         "CRITICAL RULES:\n"
         "- NEVER recommend stocks with DESPERATE dividend health.\n"
         "- Always mention the ex-date and how many trading days remain.\n"
-        "- Always recommend selling BEFORE ex-date, not on or after.\n"
-        "- Flag CAUTION stocks explicitly.\n"
-        "- Show concrete entry price, stop-loss, and exit timing.\n"
-        "- If no good opportunities exist, say so honestly.\n\n"
+        "- Sell at least 1 trading day before ex-date (or at stop if hit). Never on or after ex.\n"
+        "- Stop-loss = entry - 1*ATR (tighter; configurable). Flag CAUTION stocks explicitly.\n"
+        "- Show concrete entry, stop, and exit timing.\n"
+        "- If no good opportunities exist, say so honestly.\n"
+        "- When backtest or scan shows mostly losses, remind: strategy tends to "
+        "work better in bull/neutral regimes; suggest user check regime_analyst.\n\n"
+        "ANNOUNCEMENT DATE (from Moneycontrol):\n"
+        "- Every opportunity has an announcement_date. The strategy is: buy AFTER "
+        "announcement when conditions satisfy (health, above 50-DMA, etc.). "
+        "Always show Announcement Date in the table and say entry is valid "
+        "'on or after announcement date'.\n\n"
         "FORMAT:\n"
         "- Keep responses SHORT. No lengthy preambles or methodology recaps.\n"
-        "- Present in a table: Symbol, Yield, Health, Ex-Date, Days Left, "
+        "- Present in a table: Symbol, Yield, Health, Ann.Date, Ex-Date, Days Left, "
         "Entry, Stop, Verdict.\n"
         "- 1-2 sentences per opportunity after the table.\n"
         "- Skipped stocks: one line each (symbol + reason).\n"
         "- Be data-driven, cite specific numbers."
     ),
-    tools=[scan_dividend_opportunities, analyze_dividend_stock],
+    tools=[
+        scan_dividend_opportunities,
+        analyze_dividend_stock,
+        backtest_dividend_momentum,
+        backtest_current_moneycontrol_dividends_filtered,
+        backtest_single_event,
+    ],
 )

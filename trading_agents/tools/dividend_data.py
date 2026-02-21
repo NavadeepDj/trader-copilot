@@ -1,31 +1,43 @@
-"""Dividend announcement discovery via yfinance watchlist scan + Gemini Google Search."""
+"""Dividend discovery via Moneycontrol API + yfinance symbol validation."""
 
 from __future__ import annotations
 
-import json
-import os
+import logging as _logging
 import re
 from datetime import date, datetime, timedelta, timezone
 from typing import Dict, List
 
+import requests
 import yfinance as yf
 
-from trading_agents.config import NSE_WATCHLIST, call_gemini_with_fallback, create_genai_client
+from trading_agents.config import call_gemini_with_fallback, create_genai_client
 
 IST = timezone(timedelta(hours=5, minutes=30))
 
-import logging as _logging
-
 _yf_logger = _logging.getLogger("yfinance")
 
+_mc_cache: Dict | None = None
+_mc_cache_time: datetime | None = None
+_MC_CACHE_TTL_SECONDS = 300  # 5-minute cache
+
+_MC_API_URL = "https://api.moneycontrol.com/mcapi/v1/ecalendar/corporate-action"
+_MC_HEADERS = {
+    "User-Agent": "Mozilla/5.0",
+    "Referer": "https://www.moneycontrol.com/",
+    "Accept": "application/json",
+}
+
+
+# ---------------------------------------------------------------------------
+# Symbol validation helpers
+# ---------------------------------------------------------------------------
 
 def _validate_symbol(symbol: str) -> bool:
     """Quick check whether a symbol exists on yfinance (suppresses 404 noise)."""
     prev_level = _yf_logger.level
     _yf_logger.setLevel(_logging.CRITICAL)
     try:
-        t = yf.Ticker(symbol)
-        info = t.info or {}
+        info = yf.Ticker(symbol).info or {}
         price = info.get("currentPrice") or info.get("regularMarketPrice")
         return price is not None
     except Exception:
@@ -34,276 +46,236 @@ def _validate_symbol(symbol: str) -> bool:
         _yf_logger.setLevel(prev_level)
 
 
-def _try_fix_symbol(raw_symbol: str) -> str | None:
-    """Try common NSE symbol variations if the original doesn't validate.
+def _derive_nse_candidates(stock_name: str, mc_url: str | None) -> List[str]:
+    """Generate candidate NSE tickers from a Moneycontrol company name + URL slug."""
+    candidates: List[str] = []
 
-    Returns the first valid .NS symbol found, or None.
-    """
-    base = raw_symbol.upper().replace(".NS", "")
+    slug_match = re.search(r"/stockpricequote/[^/]+/([^/]+)/", mc_url or "")
+    slug = slug_match.group(1).upper() if slug_match else None
 
-    candidates = [
-        base,
-        base.replace(" ", ""),
-        base.replace("-", ""),
-        base[:10],
-    ]
-    if base.endswith("LTD"):
-        candidates.append(base[:-3])
-    if base.endswith("LIMITED"):
-        candidates.append(base[:-7])
-    if not base.endswith("IND") and len(base) <= 15:
-        candidates.append(base + "IND")
+    if slug:
+        base = slug
+        for suffix in ("LIMITED", "LTD", "INDIA", "IND"):
+            if base.endswith(suffix) and len(base) > len(suffix):
+                candidates.append(base[: -len(suffix)])
+        candidates.append(base)
+        for n in (12, 10, 8, 6, 4):
+            if len(base) > n:
+                candidates.append(base[:n])
+
+    clean = re.sub(r"[^A-Za-z0-9]", "", stock_name).upper()
+    candidates.append(clean)
+    candidates.append(clean[:10])
+
+    if "(" in stock_name:
+        before_paren = stock_name.split("(")[0].strip().upper().replace(" ", "").replace(".", "")
+        candidates.append(before_paren)
+
+    words = re.findall(r"[A-Za-z]+", stock_name.upper())
+    if len(words) >= 2:
+        candidates.append(words[0] + words[1][:3])
+        candidates.append(words[0][:3] + words[1][:3])
+    if words:
+        candidates.append(words[0])
 
     seen: set = set()
+    unique: List[str] = []
     for c in candidates:
         c = c.strip()
-        if not c or c in seen:
-            continue
-        seen.add(c)
-        sym = c + ".NS"
-        if _validate_symbol(sym):
-            return sym
-
-    return None
+        if c and c not in seen:
+            seen.add(c)
+            unique.append(c)
+    return unique
 
 
-def _parse_ex_date(ex_ts) -> date | None:
-    """Convert various exDividendDate formats to a date object."""
-    if ex_ts is None:
-        return None
-    if isinstance(ex_ts, (int, float)):
-        return date.fromtimestamp(ex_ts)
-    if isinstance(ex_ts, str):
-        try:
-            return datetime.fromisoformat(ex_ts).date()
-        except ValueError:
-            return None
-    if isinstance(ex_ts, datetime):
-        return ex_ts.date()
-    if isinstance(ex_ts, date):
-        return ex_ts
-    return None
+def _resolve_nse_symbol(stock_name: str, mc_url: str | None) -> str | None:
+    """Try to find a valid yfinance .NS symbol for a Moneycontrol stock.
 
-
-def scan_watchlist_dividends() -> Dict:
-    """Scan the NSE watchlist (~80 stocks) for upcoming ex-dividend dates.
-
-    Suppresses yfinance error logs during scanning to keep output clean.
-
-    Returns:
-        dict with upcoming dividend candidates and metadata.
+    1. Algorithmic: try slug/name-derived candidates on yfinance.
+    2. Gemini fallback: ask Gemini for the exact NSE symbol.
     """
-    today = datetime.now(IST).date()
-    candidates: List[Dict] = []
-    scanned: List[str] = []
-    errors: List[str] = []
-
     prev_level = _yf_logger.level
     _yf_logger.setLevel(_logging.CRITICAL)
-
     try:
-        for sym in NSE_WATCHLIST:
+        for candidate in _derive_nse_candidates(stock_name, mc_url):
+            sym = candidate + ".NS"
             try:
-                ticker = yf.Ticker(sym)
-                info = ticker.info or {}
-            except Exception as exc:
-                errors.append(f"{sym}: {exc}")
+                info = yf.Ticker(sym).info or {}
+                price = info.get("currentPrice") or info.get("regularMarketPrice")
+                if price:
+                    print(f"[dividend] Mapped '{stock_name}' -> {sym}")
+                    return sym
+            except Exception:
                 continue
-
-            scanned.append(sym)
-
-            ex_date = _parse_ex_date(info.get("exDividendDate"))
-            if ex_date is None or ex_date <= today:
-                continue
-
-            days_to_ex = (ex_date - today).days
-            div_rate = info.get("dividendRate")
-            trailing_pe = info.get("trailingPE")
-            payout_ratio = info.get("payoutRatio")
-            earnings_growth = info.get("earningsGrowth")
-            current_price = info.get("currentPrice") or info.get("regularMarketPrice")
-
-            if div_rate and current_price and float(current_price) > 0:
-                yield_pct = round((float(div_rate) / float(current_price)) * 100, 2)
-            else:
-                raw_yield = info.get("dividendYield")
-                if raw_yield is not None:
-                    y = float(raw_yield)
-                    yield_pct = round(y * 100 if y < 1.0 else y, 2)
-                else:
-                    yield_pct = None
-
-            candidates.append({
-                "symbol": sym,
-                "company": info.get("shortName", sym),
-                "current_price": round(float(current_price), 2) if current_price else None,
-                "ex_dividend_date": ex_date.isoformat(),
-                "days_to_ex_date": days_to_ex,
-                "dividend_rate_rs": round(float(div_rate), 2) if div_rate else None,
-                "dividend_yield_pct": yield_pct,
-                "trailing_pe": round(float(trailing_pe), 2) if trailing_pe else None,
-                "payout_ratio_pct": round(float(payout_ratio) * 100, 1) if payout_ratio else None,
-                "earnings_growth_pct": round(float(earnings_growth) * 100, 1) if earnings_growth else None,
-            })
     finally:
         _yf_logger.setLevel(prev_level)
 
-    candidates.sort(key=lambda c: c["days_to_ex_date"])
-    print(f"[dividend] Watchlist scan: {len(scanned)} stocks scanned, "
-          f"{len(candidates)} with upcoming dividends")
-
-    return {
-        "status": "success",
-        "source": f"yfinance watchlist scan ({len(scanned)} stocks)",
-        "stocks_scanned": len(scanned),
-        "upcoming_dividends": len(candidates),
-        "candidates": candidates,
-        "scan_date_ist": datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S IST"),
-        "scan_errors": errors[:5] if errors else None,
-    }
+    return _resolve_symbol_via_gemini(stock_name)
 
 
-def search_upcoming_dividends() -> Dict:
-    """Use Gemini with Google Search grounding to find upcoming NSE dividend announcements.
-
-    Gemini searches the web (Moneycontrol, BSE, NSE, Tickertape, etc.) for
-    recently announced dividends with future ex-dates, then returns structured data.
-
-    Returns:
-        dict with dividend candidates discovered via web search.
-    """
-    try:
-        from google.genai import types
-    except ImportError:
-        return {
-            "status": "error",
-            "error_message": "google-genai not installed.",
-        }
-
+def _resolve_symbol_via_gemini(stock_name: str) -> str | None:
+    """Ask Gemini for the exact NSE ticker when algorithmic mapping fails."""
     try:
         client = create_genai_client()
-    except ValueError as exc:
-        return {
-            "status": "error",
-            "error_message": f"No credentials configured: {exc}",
-        }
+    except (ValueError, Exception):
+        return None
 
-    today = datetime.now(IST).date()
     prompt = (
-        f"Today is {today.isoformat()}. "
-        "Search the Indian stock market for ALL companies that have recently "
-        "announced dividends with ex-dates in the next 30-45 days.\n\n"
-        "Search these sources thoroughly:\n"
-        "- Moneycontrol upcoming dividends page\n"
-        "- BSE India corporate actions\n"
-        "- NSE India corporate actions\n"
-        "- Tickertape dividends calendar\n"
-        "- Economic Times dividends section\n\n"
-        "IMPORTANT for nse_symbol: Use the EXACT NSE trading symbol as it "
-        "appears on NSE India website. Examples: PIIND, ENGINERSIN, NBCC, "
-        "CASTROLIND, COALINDIA, NHPC, SANOFI, RELIANCE, TCS.\n"
-        "Do NOT abbreviate or modify the symbol.\n\n"
-        "Return ONLY a valid JSON array (no markdown, no explanation) with objects "
-        "having these exact fields:\n"
-        '- "company_name": string (full company name)\n'
-        '- "nse_symbol": string (EXACT NSE ticker without .NS suffix)\n'
-        '- "dividend_amount_rs": number (dividend per share in Rs, or null)\n'
-        '- "dividend_type": string ("Interim" or "Final" or null)\n'
-        '- "announcement_date": string (YYYY-MM-DD format, or null)\n'
-        '- "ex_date": string (YYYY-MM-DD format)\n\n'
-        "Include ALL companies you can find -- aim for 10-30 results. "
-        "Cover large-cap, mid-cap, and small-cap companies. "
-        "Only include stocks with ex-dates AFTER today."
+        f'What is the exact NSE (National Stock Exchange of India) ticker symbol '
+        f'for "{stock_name}"? Reply with ONLY the ticker symbol in uppercase, '
+        f'nothing else. Example: ENGINERSIN'
     )
 
     try:
-        response = call_gemini_with_fallback(
-            client=client,
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                tools=[types.Tool(google_search=types.GoogleSearch())]
-            ),
-        )
-    except Exception as exc:
-        return {
-            "status": "error",
-            "error_message": f"Gemini search failed (all models exhausted): {exc}",
+        response = call_gemini_with_fallback(client=client, contents=prompt)
+        text = (response.text or "").strip().upper()
+        symbol = re.sub(r"[^A-Z0-9&-]", "", text)
+        if not symbol or len(symbol) > 20:
+            return None
+
+        sym = symbol + ".NS"
+        if _validate_symbol(sym):
+            print(f"[dividend] Gemini resolved '{stock_name}' -> {sym}")
+            return sym
+    except Exception:
+        pass
+
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Moneycontrol API discovery
+# ---------------------------------------------------------------------------
+
+def fetch_moneycontrol_dividends() -> Dict:
+    """Fetch upcoming dividend announcements from the Moneycontrol API.
+
+    Calls the corporate-action calendar API with event=D (dividends) and
+    duration=UP (upcoming). Paginates through all pages. Results are cached
+    for 5 minutes to avoid duplicate API calls and symbol resolution.
+
+    Returns:
+        dict with dividend candidates including company name, ex-date,
+        dividend amount, LTP, market cap, and resolved NSE symbol.
+    """
+    global _mc_cache, _mc_cache_time
+    now = datetime.now(IST)
+    if (_mc_cache is not None
+            and _mc_cache_time is not None
+            and (now - _mc_cache_time).total_seconds() < _MC_CACHE_TTL_SECONDS):
+        print("[dividend] Using cached Moneycontrol results "
+              f"({int((now - _mc_cache_time).total_seconds())}s old)")
+        return _mc_cache
+
+    today = now.date()
+    all_items: List[Dict] = []
+
+    for page in range(1, 6):
+        params = {
+            "indexId": "All",
+            "page": page,
+            "event": "D",
+            "apiVersion": 161,
+            "orderBy": "asc",
+            "deviceType": "W",
+            "duration": "UP",
         }
-
-    raw_text = response.text.strip() if response.text else ""
-    if not raw_text:
-        return {
-            "status": "error",
-            "error_message": "Gemini returned empty response.",
-        }
-
-    candidates = _parse_gemini_dividend_response(raw_text, today)
-
-    return {
-        "status": "success",
-        "source": "Gemini Google Search grounding",
-        "dividends_found": len(candidates),
-        "candidates": candidates,
-        "scan_date_ist": datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S IST"),
-    }
-
-
-def _parse_gemini_dividend_response(text: str, today: date) -> List[Dict]:
-    """Extract structured dividend data from Gemini's response text."""
-    json_match = re.search(r"\[[\s\S]*\]", text)
-    if not json_match:
-        return []
-
-    try:
-        data = json.loads(json_match.group())
-    except json.JSONDecodeError:
-        return []
-
-    if not isinstance(data, list):
-        return []
+        try:
+            resp = requests.get(
+                _MC_API_URL, params=params, headers=_MC_HEADERS, timeout=15
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            items = data.get("data", {}).get("list", [])
+            if not items:
+                break
+            all_items.extend(items)
+        except Exception as exc:
+            print(f"[dividend] Moneycontrol API page {page} error: {exc}")
+            if page == 1:
+                return {
+                    "status": "error",
+                    "error_message": f"Moneycontrol API request failed: {exc}",
+                }
+            break
 
     candidates: List[Dict] = []
-    for item in data:
-        if not isinstance(item, dict):
-            continue
+    symbol_failures: List[str] = []
 
-        company = item.get("company_name", "")
-        symbol = item.get("nse_symbol", "")
-        ex_date_str = item.get("ex_date", "")
-
-        if not company or not ex_date_str:
+    for item in all_items:
+        stock_name = item.get("stockName", "")
+        ex_date_str = item.get("exDate", "")
+        if not stock_name or not ex_date_str:
             continue
 
         try:
-            ex_date = datetime.strptime(ex_date_str, "%Y-%m-%d").date()
+            ex_date = datetime.strptime(ex_date_str, "%d/%m/%Y").date()
         except (ValueError, TypeError):
             continue
 
         if ex_date <= today:
             continue
 
-        if symbol and not symbol.upper().endswith(".NS"):
-            symbol = symbol.upper() + ".NS"
+        mc_url = item.get("url")
+        nse_symbol = _resolve_nse_symbol(stock_name, mc_url)
 
-        if symbol and not _validate_symbol(symbol):
-            fixed = _try_fix_symbol(symbol)
-            if fixed:
-                print(f"[dividend] Fixed symbol: {symbol} -> {fixed}")
-                symbol = fixed
-            else:
-                print(f"[dividend] Skipping {symbol} ({company}) -- not found on yfinance")
-                continue
+        if not nse_symbol:
+            symbol_failures.append(stock_name)
+            print(f"[dividend] Could not resolve NSE symbol for '{stock_name}' -- skipping")
+            continue
+
+        ltp_str = (item.get("lastValue") or "").replace(",", "")
+        try:
+            ltp = round(float(ltp_str), 2) if ltp_str else None
+        except ValueError:
+            ltp = None
+
+        div_str = item.get("dividend", "")
+        try:
+            div_amount = round(float(div_str), 2) if div_str and div_str != "-" else None
+        except ValueError:
+            div_amount = None
+
+        ann_date_str = item.get("announcementDate", "")
+        try:
+            ann_date = datetime.strptime(ann_date_str, "%d/%m/%Y").date().isoformat()
+        except (ValueError, TypeError):
+            ann_date = None
+
+        event_type = item.get("eventType", "")
+        div_type = None
+        if "Interim" in event_type:
+            div_type = "Interim"
+        elif "Final" in event_type:
+            div_type = "Final"
 
         candidates.append({
-            "company": company,
-            "symbol": symbol if symbol else None,
-            "dividend_amount_rs": item.get("dividend_amount_rs"),
-            "dividend_type": item.get("dividend_type"),
-            "announcement_date": item.get("announcement_date"),
+            "company": stock_name,
+            "symbol": nse_symbol,
             "ex_date": ex_date.isoformat(),
             "days_to_ex_date": (ex_date - today).days,
-            "source": "gemini_search",
+            "dividend_amount_rs": div_amount,
+            "dividend_type": div_type,
+            "announcement_date": ann_date,
+            "ltp": ltp,
+            "market_cap": item.get("marketCap"),
+            "source": "moneycontrol_api",
         })
 
     candidates.sort(key=lambda c: c["days_to_ex_date"])
-    return candidates
+    print(f"[dividend] Moneycontrol: {len(all_items)} records, "
+          f"{len(candidates)} resolved, {len(symbol_failures)} unmapped")
+
+    result = {
+        "status": "success",
+        "source": "Moneycontrol API (corporate actions calendar)",
+        "total_records": len(all_items),
+        "dividends_found": len(candidates),
+        "candidates": candidates,
+        "unmapped_companies": symbol_failures if symbol_failures else None,
+        "scan_date_ist": datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S IST"),
+    }
+
+    _mc_cache = result
+    _mc_cache_time = datetime.now(IST)
+    return result

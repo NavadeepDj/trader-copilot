@@ -134,7 +134,8 @@ GEMINI_MODEL = _pick_available_model()
 RISK_PER_TRADE = 0.01          # 1 % of portfolio per trade
 MAX_OPEN_TRADES = 3
 MIN_REWARD_RISK = 2.0          # minimum R:R ratio
-ATR_STOP_MULTIPLIER = 1.5      # stop = entry - 1.5 * ATR
+ATR_STOP_MULTIPLIER = 1.5      # stop = entry - 1.5 * ATR (breakout/momentum)
+DIVIDEND_STOP_ATR_MULTIPLIER = 0.8   # dividend: stop = entry - 0.8*ATR (smaller = closer stop, less loss when hit; use 0.5–0.6 for even tighter)
 INITIAL_CAPITAL = 1_000_000.0  # INR paper portfolio
 
 # --------------- Regime thresholds ---------------

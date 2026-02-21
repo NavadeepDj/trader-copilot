@@ -1,5 +1,6 @@
 google-adk>=1.25.0
 yfinance>=1.2.0
+requests>=2.31.0
 fastapi>=0.124.0
 uvicorn>=0.34.0
 python-dotenv>=1.0.0

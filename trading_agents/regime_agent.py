@@ -50,29 +50,43 @@ def analyze_regime(index_symbol: str = DEFAULT_INDEX) -> Dict:
             f"and 20-day return is {ret_20d:+.2%}. "
             "Momentum supports breakout-style entries."
         )
+        strategy_suggestions = ["Use scan_watchlist_breakouts for breakout candidates."]
     elif is_bear:
         regime = "BEAR"
-        strategy = "NO_TRADE"
+        strategy = "OVERSOLD_BOUNCE_OR_DEFENSIVE"
         reasoning = (
             f"Nifty is trading at {close} BELOW its 50-DMA ({dma_50}), "
             f"trend slope is negative ({slope:+.2f}), "
             f"and 20-day return is {ret_20d:+.2%}. "
-            "Risk rules block new trades in bear regimes."
+            "Avoid momentum/breakout. Consider: (1) Oversold bounce scan (RSI < 35, buy dip, tight stop), "
+            "(2) Defensive sectors / reduce size, (3) Stay in cash."
         )
+        strategy_suggestions = [
+            "Run scan_oversold_bounce for oversold stocks (mean reversion with tight stop).",
+            "Reduce position size or stay in cash if no clear setup.",
+        ]
     else:
         regime = "SIDEWAYS"
-        strategy = "NO_TRADE"
+        strategy = "MEAN_REVERSION_OR_OVERSOLD_BOUNCE"
         reasoning = (
             f"Nifty at {close} vs 50-DMA {dma_50}, "
             f"slope {slope:+.2f}, 20d return {ret_20d:+.2%}. "
-            "Signals are mixed -- no strong directional conviction."
+            "Signals are mixed. Breakout may fail. Prefer: oversold bounce (RSI < 35, buy dip, tight stop) or range-bound plays."
         )
+        strategy_suggestions = [
+            "Run scan_oversold_bounce for oversold candidates (works well in sideways).",
+            "Avoid aggressive breakout chasing; use tight stops.",
+        ]
+
+    if is_bull:
+        strategy_suggestions = ["Use scan_watchlist_breakouts for breakout candidates."]
 
     return {
         "status": "success",
         "regime": regime,
         "strategy": strategy,
         "reasoning": reasoning,
+        "strategy_suggestions": strategy_suggestions,
         "index_symbol": data["symbol"],
         "source": data["source"],
         "fetched_at_ist": data["fetched_at_ist"],
@@ -90,10 +104,11 @@ regime_agent = Agent(
         "Classifies the market as BULL, SIDEWAYS, or BEAR and recommends a trading strategy."
     ),
     instruction=(
-        "You are the Regime Analyst. When asked about market conditions, "
-        "use the analyze_regime tool to fetch live Nifty 50 data and classify the regime. "
-        "Always include: regime, strategy recommendation, supporting metrics, "
-        "data source, fetch timestamp, and the last 5 closing prices as proof of freshness. "
+        "You are the Regime Analyst. Use analyze_regime to classify BULL, SIDEWAYS, or BEAR. "
+        "Always include: regime, strategy, reasoning, and strategy_suggestions. "
+        "When regime is SIDEWAYS or BEAR, the tool returns strategy_suggestions like "
+        "'Run scan_oversold_bounce for oversold stocks' — mention these so the user can "
+        "ask the stock_scanner for oversold bounce candidates. For BULL, suggest breakout scan. "
         "Be concise and data-driven."
     ),
     tools=[analyze_regime],

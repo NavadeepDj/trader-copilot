@@ -63,6 +63,60 @@ def compute_atr(highs: List[float], lows: List[float], closes: List[float], peri
     return sum(true_ranges[-period:]) / period
 
 
+def compute_rsi(closes: List[float], period: int = 14) -> float | None:
+    """Compute RSI (Relative Strength Index). Returns None if insufficient data."""
+    if len(closes) < period + 1:
+        return None
+    gains: List[float] = []
+    losses: List[float] = []
+    for i in range(1, period + 1):
+        ch = closes[i] - closes[i - 1]
+        gains.append(ch if ch > 0 else 0.0)
+        losses.append(-ch if ch < 0 else 0.0)
+    avg_gain = sum(gains) / period
+    avg_loss = sum(losses) / period
+    for i in range(period + 1, len(closes)):
+        ch = closes[i] - closes[i - 1]
+        avg_gain = (avg_gain * (period - 1) + (ch if ch > 0 else 0.0)) / period
+        avg_loss = (avg_loss * (period - 1) + (-ch if ch < 0 else 0.0)) / period
+    if avg_loss == 0:
+        return 100.0
+    rs = avg_gain / avg_loss
+    rsi = 100.0 - (100.0 / (1.0 + rs))
+    return round(rsi, 2)
+
+
+def compute_rsi_series(closes: List[float], period: int = 14) -> List[float | None]:
+    """Compute RSI at each index. First 'period' values are None; rest are RSI (0-100)."""
+    n = len(closes)
+    out: List[float | None] = [None] * n
+    if n < period + 1:
+        return out
+    gains: List[float] = []
+    losses: List[float] = []
+    for i in range(1, period + 1):
+        ch = closes[i] - closes[i - 1]
+        gains.append(ch if ch > 0 else 0.0)
+        losses.append(-ch if ch < 0 else 0.0)
+    avg_gain = sum(gains) / period
+    avg_loss = sum(losses) / period
+    if avg_loss == 0:
+        out[period] = 100.0
+    else:
+        rs = avg_gain / avg_loss
+        out[period] = round(100.0 - (100.0 / (1.0 + rs)), 2)
+    for i in range(period + 1, n):
+        ch = closes[i] - closes[i - 1]
+        avg_gain = (avg_gain * (period - 1) + (ch if ch > 0 else 0.0)) / period
+        avg_loss = (avg_loss * (period - 1) + (-ch if ch < 0 else 0.0)) / period
+        if avg_loss == 0:
+            out[i] = 100.0
+        else:
+            rs = avg_gain / avg_loss
+            out[i] = round(100.0 - (100.0 / (1.0 + rs)), 2)
+    return out
+
+
 def detect_breakout(
     symbol: str,
     closes: List[float],
