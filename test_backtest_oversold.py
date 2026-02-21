@@ -10,7 +10,7 @@ print("=" * 60)
 print("1. Single stock: RELIANCE.NS (2 years, RSI<=35, exit RSI>=45)")
 print("=" * 60)
 
-r = backtest_oversold_bounce("RELIANCE.NS", years=2, rsi_entry=35, rsi_exit=45, max_hold_days=10, stop_atr_mult=0.8)
+r = backtest_oversold_bounce("RELIANCE.NS", years=2, rsi_entry=35, rsi_exit=45, max_hold_days=20, stop_atr_mult=2)
 if r.get("status") == "error":
     print("Error:", r.get("error_message"))
 else:

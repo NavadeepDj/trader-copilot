@@ -336,3 +336,57 @@ def get_top_oversold_nifty50(
         "params": out.get("params", {}),
         "backtest_end_ist": out.get("backtest_end_ist"),
     }
+
+
+def get_best_oversold_nifty50(
+    years: int = 2,
+    max_stocks: int = 50,
+    min_win_rate_pct: float = 50.0,
+    min_avg_return_pct: float = 0.0,
+    min_trades: int = 3,
+) -> Dict:
+    """Select BEST Nifty 50 stocks for oversold bounce: backtest, then keep only those that meet quality bars.
+
+    Criteria (all must pass): win_rate >= min_win_rate_pct, avg_return >= min_avg_return_pct,
+    total_trades >= min_trades. Rank by win_rate then avg_return. Use this to get a shortlist
+    of stocks that have actually worked in the backtest, not just "top 5 by one metric".
+
+    Args:
+        years: Years of history.
+        max_stocks: How many Nifty 50 stocks to run (default 50 = all).
+        min_win_rate_pct: Minimum win rate (default 50).
+        min_avg_return_pct: Minimum average return per trade in % (default 0).
+        min_trades: Minimum number of trades in backtest (default 3) so result is not noise.
+
+    Returns:
+        dict with best_symbols, best_stocks (full rows), criteria_used, and backtest summary.
+    """
+    out = backtest_oversold_nifty50(years=years, max_stocks=max_stocks, use_portfolio_sizing=True)
+    if out.get("status") != "success":
+        return out
+    per_stock = out.get("per_stock", [])
+    best = [
+        r for r in per_stock
+        if r.get("win_rate_pct") is not None
+        and r.get("avg_return_pct") is not None
+        and r.get("total_trades", 0) >= min_trades
+        and r.get("win_rate_pct", 0) >= min_win_rate_pct
+        and r.get("avg_return_pct", -999) >= min_avg_return_pct
+    ]
+    best.sort(key=lambda x: (x.get("win_rate_pct", 0), x.get("avg_return_pct", -999)), reverse=True)
+    return {
+        "status": "success",
+        "message": "Best = backtested stocks that meet min win rate, min avg return, and min trades.",
+        "criteria": {
+            "min_win_rate_pct": min_win_rate_pct,
+            "min_avg_return_pct": min_avg_return_pct,
+            "min_trades": min_trades,
+        },
+        "best_symbols": [s["symbol"] for s in best],
+        "best_stocks": best,
+        "total_passed": len(best),
+        "starting_capital_inr": out.get("starting_capital_inr"),
+        "ending_capital_inr": out.get("ending_capital_inr"),
+        "total_pnl_inr": out.get("total_pnl_inr"),
+        "backtest_end_ist": out.get("backtest_end_ist"),
+    }

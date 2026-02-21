@@ -10,6 +10,7 @@ from trading_agents.config import GEMINI_MODEL, NSE_WATCHLIST
 from trading_agents.tools.backtest_oversold import (
     backtest_oversold_bounce,
     backtest_oversold_nifty50,
+    get_best_oversold_nifty50,
     get_top_oversold_nifty50,
 )
 from trading_agents.tools.market_data import fetch_stock_data
@@ -272,11 +273,12 @@ scanner_agent = Agent(
         "candidates, say the user can 'implement' or 'paper trade [symbol]' to execute via trade_executor.\n\n"
         "4. BACKTEST OVERSOLD: Use backtest_oversold_bounce(symbol) for one stock, or "
         "backtest_oversold_nifty50() for the watchlist.\n"
-        "5. TOP 5 RSI/OVERSOLD STOCKS (CRITICAL): When the user asks for 'top 5 benefiting RSI stocks' "
-        "or 'top 5 oversold stocks for Nifty 50', you MUST call get_top_oversold_nifty50() and "
-        "return ITS result. Do NOT guess or list stocks from memory — Gemini cannot know which "
-        "stocks benefit most; only the backtest does. Present the top_symbols and top_stocks "
-        "from the tool; then the user can run scan_oversold_bounce on those symbols only for profit.\n\n"
+        "5. TOP 5 RSI/OVERSOLD: When user asks for 'top 5 benefiting RSI stocks', call get_top_oversold_nifty50() "
+        "and return its result (do NOT guess from memory).\n"
+        "6. BEST STOCKS FROM NIFTY 50: When user asks how to SELECT the best stocks from Nifty 50, "
+        "call get_best_oversold_nifty50(). It runs the backtest and keeps only stocks that meet "
+        "min win rate (e.g. 50%%) and min avg return (e.g. 0%%) and min trades (e.g. 3). Return "
+        "best_symbols and best_stocks so the user can focus scanning/paper trading on these only.\n\n"
         "For individual stock analysis, use get_stock_analysis.\n"
         "When asked for strategies in bear or sideways markets, run scan_oversold_bounce and explain."
     ),
@@ -288,5 +290,6 @@ scanner_agent = Agent(
         backtest_oversold_bounce,
         backtest_oversold_nifty50,
         get_top_oversold_nifty50,
+        get_best_oversold_nifty50,
     ],
 )
