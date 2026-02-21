@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+
+IST = timezone(timedelta(hours=5, minutes=30))
 from typing import Dict
 
 import yfinance as yf
@@ -46,7 +48,7 @@ def fetch_index_data(symbol: str = "^NSEI", days: int = DATA_LOOKBACK_DAYS) -> D
         "status": "success",
         "symbol": symbol,
         "source": "Yahoo Finance (yfinance)",
-        "fetched_at_utc": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
+        "fetched_at_ist": datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S IST"),
         "last_trade_date": last_ts,
         "trading_days": len(closes),
         "latest_close": closes[-1],

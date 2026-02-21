@@ -75,7 +75,7 @@ def analyze_regime(index_symbol: str = DEFAULT_INDEX) -> Dict:
         "reasoning": reasoning,
         "index_symbol": data["symbol"],
         "source": data["source"],
-        "fetched_at_utc": data["fetched_at_utc"],
+        "fetched_at_ist": data["fetched_at_ist"],
         "last_trade_date": data["last_trade_date"],
         "last_5_closes": data["last_5_closes"],
         "metrics": metrics,

@@ -69,7 +69,7 @@ async function loadRegime() {
             <div class="metric-row"><span class="label">20d Return</span><span class="value">${(m.return_20d * 100).toFixed(2)}%</span></div>
             <div class="metric-row"><span class="label">Volatility</span><span class="value">${(m.volatility * 100).toFixed(2)}%</span></div>
             <div style="margin-top:10px;font-size:0.78rem;color:var(--text-secondary);">
-                Source: ${d.source} | ${d.fetched_at_utc}<br>
+                Source: ${d.source} | ${d.fetched_at_ist}<br>
                 Last trade: ${d.last_trade_date}
             </div>
         `;

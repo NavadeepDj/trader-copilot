@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+
+IST = timezone(timedelta(hours=5, minutes=30))
 from typing import Dict
 
 from trading_agents.config import (
@@ -90,7 +92,7 @@ def execute_paper_trade(symbol: str, entry: float, stop: float, target: float, q
         capital_needed = qty * entry
 
     portfolio.cash -= capital_needed
-    now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    now_str = datetime.now(IST).strftime("%Y-%m-%d %H:%M IST")
     portfolio.open_positions.append(
         Position(
             symbol=symbol.upper(),
