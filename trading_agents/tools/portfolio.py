@@ -12,7 +12,9 @@ from trading_agents.models import PortfolioState, Position
 from trading_agents.tools.market_data import fetch_stock_data
 
 
-MEMORY_DIR = Path("memory")
+# Use absolute path based on project root to avoid relative path issues
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+MEMORY_DIR = _PROJECT_ROOT / "memory"
 PORTFOLIO_FILE = MEMORY_DIR / "portfolio.json"
 
 

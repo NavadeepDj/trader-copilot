@@ -14,6 +14,13 @@ from trading_agents.tools.demo_tools import (
     show_rsi_strategy_demo,
     show_strategy_comparison,
 )
+from trading_agents.tools.autonomous_trading import (
+    analyze_and_recommend_strategy,
+    scan_opportunities_for_regime,
+    prepare_trade_for_execution,
+    execute_confirmed_trade,
+    check_trading_loop_status,
+)
 from trading_agents.trade_agent import trade_agent
 
 
@@ -91,6 +98,21 @@ root_agent = Agent(
         "- Example: 'scan breakouts and execute the best one' "
         "-> delegate to stock_scanner, then trade_executor.\n"
         "- NEVER ignore part of the user's request. If unsure, ask.\n\n"
+        "AUTONOMOUS TRADING MODE (FULL FLOW):\n"
+        "When user says 'analyze market and invest', 'maximize gains', 'help me trade my portfolio', "
+        "'invest my money', or similar autonomous trading requests:\n"
+        "STEP 1: Call analyze_and_recommend_strategy() - This analyzes market, reads portfolio, "
+        "recommends strategy based on regime, and shows backtest proof automatically.\n"
+        "STEP 2: Wait for user confirmation ('continue', 'proceed'). Then call scan_opportunities_for_regime() "
+        "to find tradeable opportunities.\n"
+        "STEP 3: Present candidates. When user says 'trade [SYMBOL]' or 'trade top', call "
+        "prepare_trade_for_execution(symbol) to get the complete trade plan.\n"
+        "STEP 4: Show trade plan and wait for confirmation ('execute', 'confirm'). Then call "
+        "execute_confirmed_trade(symbol, entry, stop, target, qty) with the plan values.\n"
+        "STEP 5: After execution, call check_trading_loop_status() to see if more trades can be made.\n"
+        "STEP 6: If can_continue_trading is True, offer to continue. Loop back to STEP 2 if user confirms.\n"
+        "STEP 7: Stop when: (a) user says 'stop', (b) max positions reached (3), or (c) cash is low.\n\n"
+        "IMPORTANT: Always wait for user confirmation between steps. Never auto-execute trades.\n\n"
         "DEMO / PROOF MODE (FOR JUDGES/ORGANIZERS):\n"
         "- When user asks to 'show demo', 'prove strategy works', 'show proof', "
         "'demo for judges', 'validate strategy', or similar:\n"
@@ -113,6 +135,11 @@ root_agent = Agent(
         show_dividend_strategy_demo,
         show_rsi_strategy_demo,
         show_strategy_comparison,
+        analyze_and_recommend_strategy,
+        scan_opportunities_for_regime,
+        prepare_trade_for_execution,
+        execute_confirmed_trade,
+        check_trading_loop_status,
     ],
     sub_agents=[
         regime_agent,

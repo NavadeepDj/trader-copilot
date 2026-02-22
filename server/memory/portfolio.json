@@ -26,6 +26,61 @@
       "realized_pnl": 0.0,
       "peak": 1000000.0,
       "drawdown_pct": 0.0
+    },
+    {
+      "timestamp": "2026-02-22 09:36:20",
+      "source": "portfolio_summary",
+      "cash": 1000000.0,
+      "invested_mtm": 0.0,
+      "portfolio_value": 1000000.0,
+      "unrealized_pnl": 0.0,
+      "realized_pnl": 0.0,
+      "peak": 1000000.0,
+      "drawdown_pct": 0.0
+    },
+    {
+      "timestamp": "2026-02-22 09:36:26",
+      "source": "portfolio_summary",
+      "cash": 1000000.0,
+      "invested_mtm": 0.0,
+      "portfolio_value": 1000000.0,
+      "unrealized_pnl": 0.0,
+      "realized_pnl": 0.0,
+      "peak": 1000000.0,
+      "drawdown_pct": 0.0
+    },
+    {
+      "timestamp": "2026-02-22 09:36:53",
+      "source": "portfolio_summary",
+      "cash": 1000000.0,
+      "invested_mtm": 0.0,
+      "portfolio_value": 1000000.0,
+      "unrealized_pnl": 0.0,
+      "realized_pnl": 0.0,
+      "peak": 1000000.0,
+      "drawdown_pct": 0.0
+    },
+    {
+      "timestamp": "2026-02-22 09:38:27",
+      "source": "portfolio_summary",
+      "cash": 1000000.0,
+      "invested_mtm": 0.0,
+      "portfolio_value": 1000000.0,
+      "unrealized_pnl": 0.0,
+      "realized_pnl": 0.0,
+      "peak": 1000000.0,
+      "drawdown_pct": 0.0
+    },
+    {
+      "timestamp": "2026-02-22 09:40:01",
+      "source": "portfolio_summary",
+      "cash": 1000000.0,
+      "invested_mtm": 0.0,
+      "portfolio_value": 1000000.0,
+      "unrealized_pnl": 0.0,
+      "realized_pnl": 0.0,
+      "peak": 1000000.0,
+      "drawdown_pct": 0.0
     }
   ]
 }

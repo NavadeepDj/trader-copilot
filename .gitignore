@@ -6,3 +6,4 @@ trading_agents/.env
 my_agent/.env
 memory/*.json
 .adk/
+node_modules/
