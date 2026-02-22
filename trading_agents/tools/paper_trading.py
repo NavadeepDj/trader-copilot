@@ -14,7 +14,7 @@ from trading_agents.config import (
     RISK_PER_TRADE,
 )
 from trading_agents.models import PortfolioState, Position, TradePlan
-from trading_agents.tools.portfolio import load_portfolio, save_portfolio
+from trading_agents.tools.portfolio import load_portfolio, refresh_portfolio_positions, save_portfolio
 
 
 def calculate_trade_plan_from_entry_stop(symbol: str, entry: float, stop: float) -> Dict:
@@ -91,6 +91,8 @@ def execute_paper_trade(symbol: str, entry: float, stop: float, target: float, q
     Returns:
         dict with execution result and updated portfolio summary.
     """
+    # Refresh lifecycle first so stale trades can close and free capacity.
+    refresh_portfolio_positions()
     portfolio = load_portfolio()
 
     if len(portfolio.open_positions) >= MAX_OPEN_TRADES:

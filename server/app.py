@@ -6,6 +6,7 @@ import asyncio
 import json
 import os
 import sys
+from functools import partial
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -29,7 +30,13 @@ from google.adk.runners import InMemoryRunner
 from google.genai import types
 
 from trading_agents.agent import root_agent
-from trading_agents.tools.portfolio import get_portfolio_summary, reset_portfolio
+from trading_agents.scanner_agent import get_nifty50_signal_board
+from trading_agents.tools.portfolio import (
+    get_portfolio_performance,
+    get_portfolio_summary,
+    refresh_portfolio_positions,
+    reset_portfolio,
+)
 from trading_agents.regime_agent import analyze_regime
 
 app = FastAPI(title="Agentic Trading Assistant", version="1.0.0")
@@ -106,6 +113,34 @@ async def portfolio():
     return get_portfolio_summary()
 
 
+@app.get("/api/portfolio/performance")
+async def portfolio_performance():
+    return get_portfolio_performance()
+
+
+@app.post("/api/portfolio/refresh")
+async def portfolio_refresh():
+    return refresh_portfolio_positions()
+
+
 @app.post("/api/portfolio/reset")
 async def portfolio_reset():
     return reset_portfolio()
+
+
+@app.get("/api/signals/nifty50")
+async def nifty50_signals(
+    limit: int = 50,
+    include_news: bool = True,
+    max_news: int = 2,
+    news_days: int = 1,
+):
+    loop = asyncio.get_event_loop()
+    fn = partial(
+        get_nifty50_signal_board,
+        limit,
+        include_news,
+        max_news,
+        news_days,
+    )
+    return await loop.run_in_executor(None, fn)

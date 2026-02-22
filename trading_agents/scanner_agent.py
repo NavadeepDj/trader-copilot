@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List
 
 from google.adk.agents import Agent
 
 from trading_agents.config import GEMINI_MODEL, NSE_WATCHLIST
+from trading_agents.regime_agent import analyze_regime
 from trading_agents.tools.backtest_oversold import (
     backtest_oversold_bounce,
     backtest_oversold_nifty50,
@@ -16,6 +18,8 @@ from trading_agents.tools.backtest_oversold import (
 from trading_agents.tools.market_data import fetch_stock_data
 from trading_agents.tools.news_data import fetch_stock_news
 from trading_agents.tools.technical import compute_atr, compute_index_metrics, compute_rsi, detect_breakout
+
+IST = timezone(timedelta(hours=5, minutes=30))
 
 
 def scan_watchlist_breakouts(watchlist: str = "") -> Dict:
@@ -251,6 +255,203 @@ def scan_oversold_bounce(
         "candidates": candidates,
         "params": {"rsi_max": rsi_max, "require_below_50dma": require_below_50dma},
         "scan_errors": errors if errors else None,
+    }
+
+
+def _round_price(value: float | None) -> float | None:
+    if value is None:
+        return None
+    return round(max(0.01, float(value)), 2)
+
+
+def _signal_row_for_symbol(symbol: str, regime: str) -> Dict:
+    try:
+        data = fetch_stock_data(symbol=symbol)
+    except Exception as exc:
+        return {
+            "status": "error",
+            "symbol": symbol,
+            "error_message": f"Quote fetch exception for {symbol}: {exc}",
+        }
+    if data.get("status") != "success":
+        return {
+            "status": "error",
+            "symbol": symbol,
+            "error_message": data.get("error_message", "price fetch failed"),
+        }
+
+    closes = data["closes"]
+    highs = data["highs"]
+    lows = data["lows"]
+    volumes = data["volumes"]
+
+    close = float(closes[-1])
+    atr = float(compute_atr(highs, lows, closes))
+    rsi = compute_rsi(closes, period=14)
+    dma_50 = sum(closes[-50:]) / 50 if len(closes) >= 50 else close
+    breakout_result = detect_breakout(
+        symbol=data["symbol"],
+        closes=closes,
+        volumes=volumes,
+        highs=highs,
+        lows=lows,
+    )
+    is_breakout = bool(breakout_result.get("is_breakout")) if breakout_result.get("status") == "success" else False
+    volume_ratio = float(breakout_result.get("volume_ratio", 0.0)) if breakout_result.get("status") == "success" else None
+
+    signal = "HOLD"
+    entry: float | None = None
+    stop: float | None = None
+    target: float | None = None
+    rationale = "No clear setup right now."
+
+    if regime == "BULL":
+        if is_breakout and atr > 0:
+            signal = "BUY"
+            entry = close
+            stop = close - 1.5 * atr
+            risk = entry - stop
+            target = entry + 2.0 * risk
+            rationale = (
+                f"Breakout confirmed above 20D high with volume ratio {volume_ratio:.2f} and price above 50-DMA."
+                if volume_ratio is not None
+                else "Breakout confirmed above 20D high and price above 50-DMA."
+            )
+        elif close < dma_50 and (rsi is not None and rsi < 45):
+            signal = "SELL"
+            rationale = "Price below 50-DMA with weak RSI in bull strategy context; reduce risk or exit longs."
+        else:
+            rationale = "Trend is bull but no confirmed breakout trigger yet."
+    else:
+        oversold_buy = (rsi is not None and rsi <= 35 and close < dma_50 and atr > 0)
+        overbought_sell = (rsi is not None and rsi >= 65 and close > dma_50)
+        if oversold_buy:
+            signal = "BUY"
+            entry = close
+            stop = close - 0.8 * atr
+            risk = entry - stop
+            target = entry + 2.0 * risk
+            rationale = "Oversold bounce setup (RSI <= 35) below 50-DMA with tight stop."
+        elif overbought_sell:
+            signal = "SELL"
+            rationale = "Overbought in non-bull regime (RSI >= 65); book profits / avoid fresh long exposure."
+        else:
+            rationale = "No oversold bounce trigger and no clear risk-off trigger."
+
+    return {
+        "status": "success",
+        "symbol": data["symbol"],
+        "display_symbol": data["symbol"].replace(".NS", ""),
+        "signal": signal,
+        "current_price": _round_price(close),
+        "entry": _round_price(entry),
+        "stop": _round_price(stop),
+        "target": _round_price(target),
+        "rationale": rationale,
+        "last_trade_date": data.get("last_trade_date"),
+        "metrics": {
+            "rsi": round(rsi, 2) if rsi is not None else None,
+            "atr": _round_price(atr),
+            "dma_50": _round_price(dma_50),
+            "above_50dma": close > dma_50,
+            "is_breakout": is_breakout,
+            "volume_ratio": round(volume_ratio, 2) if volume_ratio is not None else None,
+        },
+    }
+
+
+def _attach_signal_news(row: Dict, max_news: int = 2, news_days: int = 1) -> Dict:
+    """Attach same-day/recent news snippets to one signal row."""
+    symbol = row.get("symbol")
+    if not symbol:
+        row["news_today_count"] = 0
+        row["news"] = []
+        return row
+
+    try:
+        news = fetch_stock_news(symbol=symbol)
+    except Exception as exc:
+        row["news_today_count"] = 0
+        row["news"] = []
+        row["news_error"] = f"News fetch exception: {exc}"
+        return row
+
+    if news.get("status") != "success":
+        row["news_today_count"] = 0
+        row["news"] = []
+        row["news_error"] = news.get("error_message", "news unavailable")
+        return row
+
+    articles = news.get("articles", [])
+    recent = [a for a in articles if isinstance(a.get("days_ago"), int) and a.get("days_ago") <= news_days]
+    today = [a for a in articles if a.get("days_ago") == 0]
+
+    row["news_today_count"] = len(today)
+    row["news_recent_count"] = len(recent)
+    row["news"] = [
+        {
+            "title": a.get("title", ""),
+            "publisher": a.get("publisher", "Unknown"),
+            "days_ago": a.get("days_ago"),
+            "published": a.get("published"),
+        }
+        for a in recent[:max_news]
+    ]
+    return row
+
+
+def get_nifty50_signal_board(limit: int = 50, include_news: bool = True, max_news: int = 2, news_days: int = 1) -> Dict:
+    """Build regime-aware BUY/SELL/HOLD signals for Nifty 50 watchlist symbols."""
+    try:
+        regime = analyze_regime()
+    except Exception as exc:
+        return {
+            "status": "error",
+            "error_message": f"Failed to analyze market regime: {exc}",
+        }
+    if regime.get("status") != "success":
+        return regime
+
+    chosen_regime = regime["regime"]
+    symbols = NSE_WATCHLIST[: max(1, int(limit))]
+
+    rows: List[Dict] = []
+    errors: List[str] = []
+    for sym in symbols:
+        row = _signal_row_for_symbol(sym, chosen_regime)
+        if row.get("status") != "success":
+            errors.append(f"{sym}: {row.get('error_message', 'signal build failed')}")
+            continue
+        if include_news:
+            row = _attach_signal_news(row, max_news=max_news, news_days=news_days)
+        rows.append(row)
+
+    order = {"BUY": 0, "HOLD": 1, "SELL": 2}
+    rows.sort(key=lambda r: (order.get(r.get("signal", "HOLD"), 3), r.get("display_symbol", "")))
+
+    counts = {
+        "BUY": sum(1 for r in rows if r.get("signal") == "BUY"),
+        "HOLD": sum(1 for r in rows if r.get("signal") == "HOLD"),
+        "SELL": sum(1 for r in rows if r.get("signal") == "SELL"),
+    }
+
+    return {
+        "status": "success",
+        "generated_at_ist": datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S IST"),
+        "regime": chosen_regime,
+        "strategy": regime.get("strategy"),
+        "strategy_suggestions": regime.get("strategy_suggestions"),
+        "stocks_requested": len(symbols),
+        "stocks_scanned": len(rows),
+        "signal_counts": counts,
+        "signals": rows,
+        "news_params": {
+            "include_news": include_news,
+            "max_news": max_news,
+            "news_days": news_days,
+        },
+        "scan_errors": errors if errors else None,
+        "source": "Yahoo Finance (yfinance)",
     }
 
 

@@ -1,0 +1,31 @@
+{
+  "cash": 1000000.0,
+  "open_positions": [],
+  "closed_trades": [],
+  "realized_pnl": 0.0,
+  "actions_log": [],
+  "equity_curve": [
+    {
+      "timestamp": "2026-02-22 07:23:06",
+      "source": "portfolio_summary",
+      "cash": 1000000.0,
+      "invested_mtm": 0.0,
+      "portfolio_value": 1000000.0,
+      "unrealized_pnl": 0.0,
+      "realized_pnl": 0.0,
+      "peak": 1000000.0,
+      "drawdown_pct": 0.0
+    },
+    {
+      "timestamp": "2026-02-22 07:35:07",
+      "source": "portfolio_summary",
+      "cash": 1000000.0,
+      "invested_mtm": 0.0,
+      "portfolio_value": 1000000.0,
+      "unrealized_pnl": 0.0,
+      "realized_pnl": 0.0,
+      "peak": 1000000.0,
+      "drawdown_pct": 0.0
+    }
+  ]
+}

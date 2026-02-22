@@ -72,6 +72,7 @@ class PortfolioState(BaseModel):
     closed_trades: List[dict] = Field(default_factory=list)
     realized_pnl: float = 0.0
     actions_log: List[str] = Field(default_factory=list)
+    equity_curve: List[dict] = Field(default_factory=list)
 
 
 class AgentDecision(BaseModel):

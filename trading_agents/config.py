@@ -137,6 +137,7 @@ MIN_REWARD_RISK = 2.0          # minimum R:R ratio
 ATR_STOP_MULTIPLIER = 1.5      # stop = entry - 1.5 * ATR (breakout/momentum)
 DIVIDEND_STOP_ATR_MULTIPLIER = 0.8   # dividend: stop = entry - 0.8*ATR (smaller = closer stop, less loss when hit; use 0.5–0.6 for even tighter)
 INITIAL_CAPITAL = 1_000_000.0  # INR paper portfolio
+MAX_HOLD_DAYS = 10             # lifecycle time exit for open paper trades
 
 # --------------- Regime thresholds ---------------
 BULL_RETURN_20D_MIN = 0.0

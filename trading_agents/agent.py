@@ -9,6 +9,11 @@ from trading_agents.portfolio_agent import portfolio_agent
 from trading_agents.regime_agent import regime_agent
 from trading_agents.scanner_agent import scanner_agent
 from trading_agents.tools.market_status import get_market_status
+from trading_agents.tools.demo_tools import (
+    show_dividend_strategy_demo,
+    show_rsi_strategy_demo,
+    show_strategy_comparison,
+)
 from trading_agents.trade_agent import trade_agent
 
 
@@ -86,13 +91,29 @@ root_agent = Agent(
         "- Example: 'scan breakouts and execute the best one' "
         "-> delegate to stock_scanner, then trade_executor.\n"
         "- NEVER ignore part of the user's request. If unsure, ask.\n\n"
+        "DEMO / PROOF MODE (FOR JUDGES/ORGANIZERS):\n"
+        "- When user asks to 'show demo', 'prove strategy works', 'show proof', "
+        "'demo for judges', 'validate strategy', or similar:\n"
+        "  - For dividend strategy demo: call show_dividend_strategy_demo()\n"
+        "  - For RSI/oversold strategy demo: call show_rsi_strategy_demo()\n"
+        "  - For strategy comparison: call show_strategy_comparison()\n"
+        "- Present the demo results in a clear, formatted way showing:\n"
+        "  - Current market regime\n"
+        "  - Example trades (wins and losses with explanation)\n"
+        "  - Key insights and rules\n"
+        "  - Why the strategy works in specific conditions\n\n"
         "RULES:\n"
         "- This is PAPER TRADING only. Never claim real money is at risk.\n"
         "- Always show data source and timestamp in responses.\n"
         "- Format Indian currency as INR with commas (e.g., INR 10,00,000).\n"
         "- Be concise, data-driven, and explain your reasoning."
     ),
-    tools=[get_market_status],
+    tools=[
+        get_market_status,
+        show_dividend_strategy_demo,
+        show_rsi_strategy_demo,
+        show_strategy_comparison,
+    ],
     sub_agents=[
         regime_agent,
         scanner_agent,

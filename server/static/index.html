@@ -45,9 +45,16 @@ All trades are paper trades. No real money involved.
         </div>
 
         <div class="card">
+            <h3>Nifty 50 Signal Board</h3>
+            <button class="btn-refresh" onclick="loadSignalBoard()">Refresh</button>
+            <div id="signalBoardContent"><span class="loading">Loading...</span></div>
+        </div>
+
+        <div class="card">
             <h3>Portfolio</h3>
             <button class="btn-refresh" onclick="loadPortfolio()">Refresh</button>
             <div id="portfolioContent"><span class="loading">Loading...</span></div>
+            <div id="portfolioCharts" class="portfolio-charts"></div>
         </div>
     </div>
 </div>
